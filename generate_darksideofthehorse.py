@@ -1,57 +1,97 @@
-import cloudscraper
-import re
-import sys
+mport requests
+import json
+from bs4 import BeautifulSoup
 from feedgen.feed import FeedGenerator
 from datetime import datetime, timezone
 
-URL = 'https://www.gocomics.com/darksideofthehorse'
+print("Script gestart: Ophalen van de dagelijkse Dark Side of the Horse strip.")
 
-print(f"--- SCRAPE START: Dark Side of the Horse ---")
+# URL van de Dark Side of the Horse comic pagina
+DARKSIDEOFTHEHORSE_URL = 'https://www.gocomics.com/darksideofthehorse'
 
-# We maken een scraper aan die zich gedraagt als een echte browser
-scraper = cloudscraper.create_scraper(
-    browser={
-        'browser': 'chrome',
-        'platform': 'windows',
-        'desktop': True
+# Stap 1: Haal de webpagina op
+try:
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
     }
-)
+    response = requests.get(DARKSIDEOFTHEHORSE_URL, headers=headers)
+    response.raise_for_status()
+    print("SUCCES: GoComics pagina HTML opgehaald.")
+except requests.exceptions.RequestException as e:
+    print(f"FOUT: Kon GoComics pagina niet ophalen. Fout: {e}")
+    exit(1)
+
+# --- DEFINITIEVE METHODE V3: Filteren van 'favorieten' ---
+print("Zoeken naar de correcte JSON-LD script tag en filteren van favorieten...")
+
+image_url = None
+try:
+    soup = BeautifulSoup(response.text, 'lxml')
+
+    # Vind ALLE script tags van het type 'application/ld+json'
+    all_json_ld_scripts = soup.find_all('script', type='application/ld+json')
+
+    if not all_json_ld_scripts:
+        raise ValueError("Geen 'application/ld+json' script tags gevonden op de pagina.")
+
+    for script in all_json_ld_scripts:
+        if script.string:
+            try:
+                data = json.loads(script.string)
+
+                # Controleer of dit een valide 'ImageObject' is dat de pagina representeert
+                if (isinstance(data, dict) and
+                        data.get('@type') == 'ImageObject' and
+                        data.get('representativeOfPage') is True and
+                        'url' in data):
+                    
+                    # --- DE CRUCIALE EXTRA CONTROLE ---
+                    # Zoek "omhoog" vanaf het script om te zien of het in de 'FiveFavorites' sectie zit.
+                    if script.find_parent('section', class_='ShowFiveFavorites_showFiveFavorites__zsqHu'):
+                        # Ja, dit is een favoriet. Negeer deze en ga door naar de volgende in de loop.
+                        print(f"INFO: 'Favoriet' afbeelding genegeerd: ...{data['url'][-20:]}")
+                        continue
+                    
+                    # Als de code hier komt, is het GEEN favoriet. Dit is de hoofdafbeelding.
+                    image_url = data['url']
+                    print(f"SUCCES: Hoofdafbeelding gevonden: {image_url}")
+                    break  # Stop de loop, we zijn klaar.
+
+            except (json.JSONDecodeError, AttributeError):
+                continue
+    
+    if not image_url:
+        raise ValueError("Kon de hoofdafbeelding niet isoleren van de favorieten.")
+
+except (ValueError, KeyError, TypeError) as e:
+    print(f"FOUT: Kon de URL niet uit de data halen. Het script is mogelijk verouderd.")
+    print(f"Foutdetails: {e}")
+    with open("debug_gocomics.html", "w", encoding="utf-8") as f:
+        f.write(response.text)
+    print("De ontvangen HTML is opgeslagen in 'debug_gocomics.html' voor analyse.")
+    exit(1)
+# --- EINDE DEFINITIEVE METHODE ---
+    
+# De rest van het script blijft ongewijzigd
+# ... (Stap 3 & 4) ...
+fg = FeedGenerator()
+fg.id(DARKSIDEOFTHEHORSE_URL)
+fg.title('Dark Side of the Horse Comic Strip')
+fg.link(href=DARKSIDEOFTHEHORSE_URL, rel='alternate')
+fg.description('De dagelijkse Dark Side of the Horse strip.')
+fg.language('en')
+
+current_date = datetime.now(timezone.utc)
+current_date_str = current_date.strftime("%Y-%m-%d")
+
+fe = fg.add_entry()
+fe.id(image_url)
+fe.title(f'Dark Side of the Horse - {current_date_str}')
+fe.link(href=DARKSIDEOFTHEHORSE_URL)
+fe.pubDate(current_date)
+fe.description(f'<img src="{image_url}" alt="Dark Side of the Horse Strip voor {current_date_str}" />')
 
 try:
-    response = scraper.get(URL, timeout=20)
-    html = response.text
-    
-    if "Establishing a secure connection" in html:
-        print("FOUT: Zelfs cloudscraper werd geblokkeerd door de beveiligingsmuur.")
-        sys.exit(1)
-        
-    print(f"SUCCES: Pagina geladen (Status {response.status_code})")
-except Exception as e:
-    print(f"FOUT: Verbinding mislukt. {e}")
-    sys.exit(1)
-
-# We zoeken specifiek naar de ID die in de assets-map staat.
-# Dit zorgt ervoor dat we exact de 9a17... (of vergelijkbare) strip-ID pakken.
-match = re.search(r'assets[\\\/]+([a-f0-9]{32})', html)
-
-if match:
-    asset_id = match.group(1)
-    image_url = f"https://featureassets.gocomics.com/assets/{asset_id}?optimizer=image&width=1400&quality=85"
-    print(f"GEVONDEN ID: {asset_id}")
-    
-    # RSS opbouw
-    fg = FeedGenerator()
-    fg.id(URL)
-    fg.title('Dark Side of the Horse')
-    fg.link(href=URL, rel='alternate')
-    fg.description('Dagelijkse strip via Cloudscraper Bypass')
-    
-    fe = fg.add_entry()
-    fe.id(image_url)
-    fe.title(f'Dark Side of the Horse - {datetime.now().strftime("%Y-%m-%d")}')
-    fe.link(href=URL)
-    fe.description(f'<img src="{image_url}" />')
-    
     fg.rss_file('darksideofthehorse.xml', pretty=True)
     print("SUCCES: 'darksideofthehorse.xml' is aangemaakt met de strip van vandaag.")
 except Exception as e:
