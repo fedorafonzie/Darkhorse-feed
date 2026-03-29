@@ -1,4 +1,4 @@
-mport requests
+import requests
 import json
 from bs4 import BeautifulSoup
 from feedgen.feed import FeedGenerator
