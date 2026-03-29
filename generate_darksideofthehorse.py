@@ -1,4 +1,4 @@
-import requests
+import cloudscraper
 import re
 import sys
 from feedgen.feed import FeedGenerator
@@ -6,40 +6,32 @@ from datetime import datetime, timezone
 
 URL = 'https://www.gocomics.com/darksideofthehorse'
 
-# We gebruiken een sessie om cookies te onthouden (belangrijk voor beveiliging)
-session = requests.Session()
+print(f"--- SCRAPE START: Dark Side of the Horse ---")
 
-# We bootsen een iPhone na. Beveiligingssystemen laten mobiele gebruikers 
-# vaker door zonder JavaScript-challenge om batterij te sparen.
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Referer': 'https://www.google.com/',
-}
-
-print(f"--- START SCRAPE: Dark Side of the Horse (Mobile Simulation) ---")
+# We maken een scraper aan die zich gedraagt als een echte browser
+scraper = cloudscraper.create_scraper(
+    browser={
+        'browser': 'chrome',
+        'platform': 'windows',
+        'desktop': True
+    }
+)
 
 try:
-    # We doen eerst een 'bezoek' aan de hoofdpagina om een cookie te krijgen
-    session.get('https://www.gocomics.com/', headers=HEADERS, timeout=10)
-    
-    # Nu halen we de werkelijke pagina op
-    response = session.get(URL, headers=HEADERS, timeout=15)
+    response = scraper.get(URL, timeout=20)
     html = response.text
     
     if "Establishing a secure connection" in html:
-        print("FOUT: De mobiele emulatie is ook geblokkeerd door Bunny Shield.")
-        # Als laatste redmiddel: print de URL die in de foutpagina staat, soms zit de ID daar in.
+        print("FOUT: Zelfs cloudscraper werd geblokkeerd door de beveiligingsmuur.")
         sys.exit(1)
         
     print(f"SUCCES: Pagina geladen (Status {response.status_code})")
-
 except Exception as e:
     print(f"FOUT: Verbinding mislukt. {e}")
     sys.exit(1)
 
-# Zoek de 32-cijferige ID achter 'assets/'
+# We zoeken specifiek naar de ID die in de assets-map staat.
+# Dit zorgt ervoor dat we exact de 9a17... (of vergelijkbare) strip-ID pakken.
 match = re.search(r'assets[\\\/]+([a-f0-9]{32})', html)
 
 if match:
@@ -52,7 +44,7 @@ if match:
     fg.id(URL)
     fg.title('Dark Side of the Horse')
     fg.link(href=URL, rel='alternate')
-    fg.description('Dagelijkse strip')
+    fg.description('Dagelijkse strip via Cloudscraper Bypass')
     
     fe = fg.add_entry()
     fe.id(image_url)
@@ -61,7 +53,9 @@ if match:
     fe.description(f'<img src="{image_url}" />')
     
     fg.rss_file('darksideofthehorse.xml', pretty=True)
-    print("SUCCES: 'darksideofthehorse.xml' is aangemaakt met de strip van vandaag.")
-except Exception as e:
-    print(f"FOUT: Kon het bestand niet wegschrijven. Foutmelding: {e}")
-    exit(1)
+    print("XML bestand 'darksideofthehorse.xml' succesvol aangemaakt.")
+else:
+    print("FOUT: Geen strip-ID gevonden in de broncode.")
+    # Toon een klein deel van de code om te zien wat er binnenkwam
+    print("Preview broncode:", html[:500])
+    sys.exit(1)
