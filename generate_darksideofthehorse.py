@@ -1,99 +1,67 @@
 import requests
-import json
-from bs4 import BeautifulSoup
+import re
+import sys
 from feedgen.feed import FeedGenerator
 from datetime import datetime, timezone
 
-print("Script gestart: Ophalen van de dagelijkse Dark Side of the Horse strip.")
+URL = 'https://www.gocomics.com/darksideofthehorse'
 
-# URL van de Dark Side of the Horse comic pagina
-DARKSIDEOFTHEHORSE_URL = 'https://www.gocomics.com/darksideofthehorse'
+# We gebruiken een sessie om cookies te onthouden (belangrijk voor beveiliging)
+session = requests.Session()
 
-# Stap 1: Haal de webpagina op
+# We bootsen een iPhone na. Beveiligingssystemen laten mobiele gebruikers 
+# vaker door zonder JavaScript-challenge om batterij te sparen.
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Referer': 'https://www.google.com/',
+}
+
+print(f"--- START SCRAPE: Dark Side of the Horse (Mobile Simulation) ---")
+
 try:
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
-    }
-    response = requests.get(DARKSIDEOFTHEHORSE_URL, headers=headers)
-    response.raise_for_status()
-    print("SUCCES: GoComics pagina HTML opgehaald.")
-except requests.exceptions.RequestException as e:
-    print(f"FOUT: Kon GoComics pagina niet ophalen. Fout: {e}")
-    exit(1)
-
-# --- DEFINITIEVE METHODE V3: Filteren van 'favorieten' ---
-print("Zoeken naar de correcte JSON-LD script tag en filteren van favorieten...")
-
-image_url = None
-try:
-    soup = BeautifulSoup(response.text, 'lxml')
-
-    # Vind ALLE script tags van het type 'application/ld+json'
-    all_json_ld_scripts = soup.find_all('script', type='application/ld+json')
-
-    if not all_json_ld_scripts:
-        raise ValueError("Geen 'application/ld+json' script tags gevonden op de pagina.")
-
-    for script in all_json_ld_scripts:
-        if script.string:
-            try:
-                data = json.loads(script.string)
-
-                # Controleer of dit een valide 'ImageObject' is dat de pagina representeert
-                if (isinstance(data, dict) and
-                        data.get('@type') == 'ImageObject' and
-                        data.get('representativeOfPage') is True and
-                        'url' in data):
-                    
-                    # --- DE CRUCIALE EXTRA CONTROLE ---
-                    # Zoek "omhoog" vanaf het script om te zien of het in de 'FiveFavorites' sectie zit.
-                    if script.find_parent('section', class_='ShowFiveFavorites_showFiveFavorites__zsqHu'):
-                        # Ja, dit is een favoriet. Negeer deze en ga door naar de volgende in de loop.
-                        print(f"INFO: 'Favoriet' afbeelding genegeerd: ...{data['url'][-20:]}")
-                        continue
-                    
-                    # Als de code hier komt, is het GEEN favoriet. Dit is de hoofdafbeelding.
-                    image_url = data['url']
-                    print(f"SUCCES: Hoofdafbeelding gevonden: {image_url}")
-                    break  # Stop de loop, we zijn klaar.
-
-            except (json.JSONDecodeError, AttributeError):
-                continue
+    # We doen eerst een 'bezoek' aan de hoofdpagina om een cookie te krijgen
+    session.get('https://www.gocomics.com/', headers=HEADERS, timeout=10)
     
-    if not image_url:
-        raise ValueError("Kon de hoofdafbeelding niet isoleren van de favorieten.")
-
-except (ValueError, KeyError, TypeError) as e:
-    print(f"FOUT: Kon de URL niet uit de data halen. Het script is mogelijk verouderd.")
-    print(f"Foutdetails: {e}")
-    with open("debug_gocomics.html", "w", encoding="utf-8") as f:
-        f.write(response.text)
-    print("De ontvangen HTML is opgeslagen in 'debug_gocomics.html' voor analyse.")
-    exit(1)
-# --- EINDE DEFINITIEVE METHODE ---
+    # Nu halen we de werkelijke pagina op
+    response = session.get(URL, headers=HEADERS, timeout=15)
+    html = response.text
     
-# De rest van het script blijft ongewijzigd
-# ... (Stap 3 & 4) ...
-fg = FeedGenerator()
-fg.id(DARKSIDEOFTHEHORSE_URL)
-fg.title('Dark Side of the Horse Comic Strip')
-fg.link(href=DARKSIDEOFTHEHORSE_URL, rel='alternate')
-fg.description('De dagelijkse Dark Side of the Horse strip.')
-fg.language('en')
+    if "Establishing a secure connection" in html:
+        print("FOUT: De mobiele emulatie is ook geblokkeerd door Bunny Shield.")
+        # Als laatste redmiddel: print de URL die in de foutpagina staat, soms zit de ID daar in.
+        sys.exit(1)
+        
+    print(f"SUCCES: Pagina geladen (Status {response.status_code})")
 
-current_date = datetime.now(timezone.utc)
-current_date_str = current_date.strftime("%Y-%m-%d")
-
-fe = fg.add_entry()
-fe.id(image_url)
-fe.title(f'Dark Side of the Horse - {current_date_str}')
-fe.link(href=DARKSIDEOFTHEHORSE_URL)
-fe.pubDate(current_date)
-fe.description(f'<img src="{image_url}" alt="Dark Side of the Horse Strip voor {current_date_str}" />')
-
-try:
-    fg.rss_file('darksideofthehorse.xml', pretty=True)
-    print("SUCCES: 'darksideofthehorse.xml' is aangemaakt met de strip van vandaag.")
 except Exception as e:
-    print(f"FOUT: Kon het bestand niet wegschrijven. Foutmelding: {e}")
-    exit(1)
+    print(f"FOUT: Verbinding mislukt. {e}")
+    sys.exit(1)
+
+# Zoek de 32-cijferige ID achter 'assets/'
+match = re.search(r'assets[\\\/]+([a-f0-9]{32})', html)
+
+if match:
+    asset_id = match.group(1)
+    image_url = f"https://featureassets.gocomics.com/assets/{asset_id}?optimizer=image&width=1400&quality=85"
+    print(f"GEVONDEN ID: {asset_id}")
+    
+    # RSS opbouw
+    fg = FeedGenerator()
+    fg.id(URL)
+    fg.title('Dark Side of the Horse')
+    fg.link(href=URL, rel='alternate')
+    fg.description('Dagelijkse strip')
+    
+    fe = fg.add_entry()
+    fe.id(image_url)
+    fe.title(f'Dark Side of the Horse - {datetime.now().strftime("%Y-%m-%d")}')
+    fe.link(href=URL)
+    fe.description(f'<img src="{image_url}" />')
+    
+    fg.rss_file('darksideofthehorse.xml', pretty=True)
+    print("XML bestand succesvol aangemaakt.")
+else:
+    print("FOUT: Geen strip-ID gevonden in de broncode.")
+    sys.exit(1)
