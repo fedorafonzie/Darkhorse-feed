@@ -53,9 +53,7 @@ if match:
     fe.description(f'<img src="{image_url}" />')
     
     fg.rss_file('darksideofthehorse.xml', pretty=True)
-    print("XML bestand 'darksideofthehorse.xml' succesvol aangemaakt.")
-else:
-    print("FOUT: Geen strip-ID gevonden in de broncode.")
-    # Toon een klein deel van de code om te zien wat er binnenkwam
-    print("Preview broncode:", html[:500])
-    sys.exit(1)
+    print("SUCCES: 'darksideofthehorse.xml' is aangemaakt met de strip van vandaag.")
+except Exception as e:
+    print(f"FOUT: Kon het bestand niet wegschrijven. Foutmelding: {e}")
+    exit(1)
